@@ -7,11 +7,64 @@ echo "---> RVM Buildpack"
 LAYERSDIR="$1"
 PLAN="$3"
 
-# If a .ruby-version file exists, use the version specified in there.
-RUBY_VERSION=2.6.5
-if [[ -f .ruby-version ]]; then
-  RUBY_VERSION=$(cat .ruby-version | tr -d '[:space:]')
+DEFAULT_RUBY_VERSION="2.6.5"
+
+# The "yj" binary is required to transform TOML code into JSON code below
+curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0.0/yj-linux
+chmod +x /tmp/yj
+
+# 2. INSTALL RVM AND A CONF'ABLE VERSION OF RUBY
+RVM_VERSION="1.29.9"
+RVMLAYER="${LAYERSDIR}/rvm"
+REMOTE_RVM_VERSION=""
+if [[ -f "${RVMLAYER}.toml" ]]; then
+  REMOTE_RVM_VERSION=$(cat "${RVMLAYER}.toml" | /tmp/yj -t | jq -r .metadata.rvm_version 2>/dev/null || echo 'not found')
 fi
+
+export rvm_path="${RVMLAYER}"
+export rvm_scripts_path="${RVMLAYER}/scripts"
+export rvm_autoupdate_flag=0
+if [[ $RVM_VERSION == $REMOTE_RVM_VERSION ]]; then
+  echo "---> Reusing cached RVM version ${RVM_VERSION}"
+else
+  mkdir -p "${RVMLAYER}/env"
+  mkdir -p "${RVMLAYER}/profile.d"
+
+  echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
+  echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
+  ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
+
+  echo "---> Installing RVM version ${RVM_VERSION}"
+  curl -sSL https://get.rvm.io | bash -s -- --version ${RVM_VERSION}
+fi
+
+# If a .ruby-version file exists, use the version specified in there.
+if [[ -f .ruby-version ]]; then
+  DEFAULT_RUBY_VERSION=$(cat .ruby-version | tr -d '[:space:]')
+fi
+
+source "${RVMLAYER}/scripts/rvm"
+REMOTE_RUBY_VERSION=""
+if [[ -f "${RVMLAYER}.toml" ]]; then
+  REMOTE_RUBY_VERSION=$(cat "${RVMLAYER}.toml" | /tmp/yj -t | jq -r .metadata.ruby_version 2>/dev/null || echo 'not found')
+fi
+
+if [[ $REMOTE_RUBY_VERSION == "" || $DEFAULT_RUBY_VERSION != $REMOTE_RUBY_VERSION ]]; then
+  echo "---> Installing Ruby version ${DEFAULT_RUBY_VERSION}"
+  rvm autolibs disable
+  rvm remove all --force
+  rvm install ${DEFAULT_RUBY_VERSION}
+  rvm cleanup all
+else
+  echo "---> Ruby version ${DEFAULT_RUBY_VERSION} already installed"
+fi
+
+# Write Layer Content Metadata according to
+# https://github.com/buildpacks/spec/blob/master/buildpack.md#layer-content-metadata-toml
+echo -e "build = true\ncache = true\nlaunch = true\n" > "${RVMLAYER}.toml"
+echo "[metadata]" >> "${RVMLAYER}.toml"
+echo "rvm_version = \"$RVM_VERSION\"" >> "${RVMLAYER}.toml"
+echo "ruby_version = \"$DEFAULT_RUBY_VERSION\"" >> "${RVMLAYER}.toml"
 
 # Look for the line "BUNDLED WITH" and if found use the next line as the
 # version of Bundler to be installed.
@@ -31,40 +84,6 @@ if [[ -f Gemfile.lock ]]; then
   done < "Gemfile.lock"
 fi
 
-# The "yj" binary is required to transform TOML code into JSON code below
-curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0.0/yj-linux
-chmod +x /tmp/yj
-
-# 2. INSTALL RVM AND A CONF'ABLE VERSION OF RUBY
-RVMVERSION="1.29.9"
-RVMLAYER="${LAYERSDIR}/rvm"
-REMOTE_RVM_VERSION=""
-if [[ -f "${RVMLAYER}.toml" ]]; then
-  REMOTE_RVM_VERSION=$(cat "${RVMLAYER}.toml" | /tmp/yj -t | jq -r .metadata 2>/dev/null || echo 'not found')
-fi
-
-export rvm_path="${RVMLAYER}"
-export rvm_scripts_path="${RVMLAYER}/scripts"
-if [[ $RVMVERSION == $REMOTE_RVM_VERSION ]] ; then
-  echo "---> Reusing cached RVM version ${RVMVERSION}"
-else
-  mkdir -p "${RVMLAYER}/env"
-  mkdir -p "${RVMLAYER}/profile.d"
-
-  echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
-  echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
-  ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
-
-  echo "---> Installing RVM version ${RVMVERSION}"
-  curl -sSL https://get.rvm.io | bash -s -- --version ${RVMVERSION}
-fi
-
-echo "---> Installing Ruby version ${RUBY_VERSION}"
-source "${RVMLAYER}/scripts/rvm"
-rvm autolibs disable
-rvm install ${RUBY_VERSION}
-echo -e "build = true\ncache = true\nlaunch = true\nmetadata = \"$RVMVERSION\"" > "${RVMLAYER}.toml"
-
 # INSTALL BUNDLER
 GEM_BUNDLER_ARGS=""
 if [[ $BUNDLER_VERSION != "" ]]; then
@@ -75,8 +94,9 @@ else
 fi
 gem install bundler --no-document $GEM_BUNDLER_ARGS
 
-# INSTALL PUMA AS APPSERVER
+# INSTALL THE PUMA APP SERVER
 gem install puma --no-document
+gem cleanup
 
 # 5. INSTALL GEMS
 # Compares previous Gemfile.lock checksum to the current Gemfile.lock
@@ -87,21 +107,37 @@ if [[ -f "${BUNDLERLAYER}.toml" ]]; then
   REMOTE_BUNDLER_CHECKSUM=$(cat "${BUNDLERLAYER}.toml" | /tmp/yj -t | jq -r .metadata 2>/dev/null || echo 'not found')
 fi
 
-if [[ -f Gemfile.lock && $LOCAL_BUNDLER_CHECKSUM == $REMOTE_BUNDLER_CHECKSUM ]] ; then
+bundle config --local path "$BUNDLERLAYER" >/dev/null
+bundle config --local bin "$BUNDLERLAYER/bin" >/dev/null
+set +e
+bundle check 1>/dev/null
+BUNDLE_CHECK_RESULT=$?
+set -e
+if [[ $BUNDLE_CHECK_RESULT -eq 0 && -f Gemfile.lock && $LOCAL_BUNDLER_CHECKSUM == $REMOTE_BUNDLER_CHECKSUM ]]; then
   # Determine if no gem dependencies have changed, so it can reuse existing
   # gems without running bundle install
   echo "---> Reusing cached Gems"
-  bundle config --local path "$BUNDLERLAYER" >/dev/null
-  bundle config --local bin "$BUNDLERLAYER/bin" >/dev/null
 else
   # Determine if there has been a gem dependency change and install new gems on
   # the bundler layer, re-using existing and un-changed gems
   BUNDLERLAYER="${LAYERSDIR}/bundler"
+  echo "---> Deleting the bundler directory"
+  rm -rf "${BUNDLERLAYER}"
+
   echo "---> Running 'bundle install'"
   mkdir -p "$BUNDLERLAYER"
-  echo -e "cache = true\nlaunch = true\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "$BUNDLERLAYER.toml"
+  echo -e "build = true\ncache = true\nlaunch = true\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "$BUNDLERLAYER.toml"
   bundle install --path "$BUNDLERLAYER" --binstubs "$BUNDLERLAYER/bin"
 fi
+set +e
+bundle clean 1>/dev/null
+set -e
 
 # 6. SET DEFAULT START COMMAND
-echo 'processes = [{ type = "web", command = "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080"}]' > "${LAYERSDIR}/launch.toml"
+if [[ -f Procfile ]]; then
+  echo "---> Not specifying a launch command because a Procfile is present in the app root directory"
+else
+  echo -n "---> Specifying launch command: "
+  echo "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080"
+  echo 'processes = [{ type = "web", command = "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080"}]' > "${LAYERSDIR}/launch.toml"
+fi

@@ -6,16 +6,7 @@ RVM. It is intented for use in combination with tools provided by the
 
 It also installs [Bundler](https://bundler.io/) and the
 [Puma](https://puma.io/) gem. It then runs "bundle install" to install all Gems
-required by the application. It re-uses the "Bundler layer" if there have not
-been any changes between two build runs to speed up the creation of the final
-image.
-
-A container created using this CNB uses the following command for launching the
-application:
-
-```shell
-$ bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080
-```
+required by the application.
 
 ## Detection
 
@@ -26,8 +17,10 @@ directory of the application.
 
 ### RVM
 
-The default RVM version installed currently is: **1.9.29**. If the same version
-of RVM was installed in a previous build run, it is used again.
+The default RVM version installed currently is: **1.9.29**.
+
+If the same version of RVM was installed in a previous build run, it is
+restored from the cache.
 
 ### Ruby version
 
@@ -59,6 +52,20 @@ discarded and the Gems are installed from scratch by running `bundle install`.
 ## Launch
 
 The RVM layer and the Bundler layer are available in the launch phase.
+
+By default the following command is used for launching the application:
+
+```shell
+$ bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080
+
+...
+```
+
+### Procfile support
+
+If a Procfile is present, **no launch command is provided** and it is expected
+that a different CNB like the [Procfile CNB](https://github.com/cloudfoundry/procfile-cnb)
+provides the launch command for the image.
 
 ## Authors
 
