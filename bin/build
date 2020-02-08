@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+echo "---> RVM Buildpack"
+
+# 1. GET ARGS
+LAYERSDIR="$1"
+PLAN="$3"
+
+# the ruby version will be read from .ruby-version
+RUBY_VERSION=2.6.5
+if [[ -f .ruby-version ]]; then
+  RUBY_VERSION=$(cat .ruby-version | tr -d '[:space:]')
+fi
+
+if [[ -f .rvmrc ]]; then
+  RUBY_VERSION=$(cat .rvmrc | tr -d '[:space:]')
+fi
+
+BUNDLER_VERSION=""
+if [[ -f Gemfile.lock ]]; then
+  FOUND_BUNDLED_WITH=0
+  while read -r line
+  do
+    if [[ $FOUND_BUNDLED_WITH -eq 1 ]]; then
+      BUNDLER_VERSION="$line"
+      break
+    fi
+
+    if [[ "$line" == "BUNDLED WITH" ]]; then
+      FOUND_BUNDLED_WITH=1
+    fi
+  done < "Gemfile.lock"
+fi
+
+# 2. INSTALL RVM AND A CONF'ABLE VERSION OF RUBY
+RVMLAYER="${LAYERSDIR}/rvm"
+mkdir -p "${RVMLAYER}/env"
+mkdir -p "${RVMLAYER}/profile.d"
+
+echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
+echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
+ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
+
+echo "---> Installing RVM version 'stable'"
+curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0.0/yj-linux
+chmod +x /tmp/yj
+
+export rvm_path="${RVMLAYER}"
+export rvm_scripts_path="${RVMLAYER}/scripts"
+curl -sSL https://get.rvm.io | bash -s stable
+
+source "${RVMLAYER}/scripts/rvm"
+rvm autolibs disable
+rvm install ${RUBY_VERSION}
+
+echo -e "launch = true\nbuild = true\ncache = false\n" > "${RVMLAYER}.toml"
+
+# INSTALL BUNDLER
+echo "---> Installing bundler version $BUNDLER_VERSION"
+GEM_BUNDLER_ARGS=""
+if [[ $BUNDLER_VERSION != "" ]]; then GEM_BUNDLER_ARGS="--version $BUNDLER_VERSION"; fi
+gem install bundler --no-document $GEM_BUNDLER_ARGS
+
+# INSTALL PUMA AS APPSERVER
+gem install puma --no-document
+
+# 5. INSTALL GEMS
+# Compares previous Gemfile.lock checksum to the current Gemfile.lock
+BUNDLERLAYER="${LAYERSDIR}/bundler"
+LOCAL_BUNDLER_CHECKSUM=$(sha256sum Gemfile.lock | cut -d ' ' -f 1)
+REMOTE_BUNDLER_CHECKSUM=""
+if [[ -f "${BUNDLERLAYER}.toml" ]]; then
+  REMOTE_BUNDLER_CHECKSUM=$(cat "${BUNDLERLAYER}.toml" | /tmp/yj -t | jq -r .metadata 2>/dev/null || echo 'not found')
+fi
+
+if [[ -f Gemfile.lock && $LOCAL_BUNDLER_CHECKSUM == $REMOTE_BUNDLER_CHECKSUM ]] ; then
+  # Determine if no gem dependencies have changed, so it can reuse existing gems without running bundle install
+  echo "---> Reusing gems"
+  bundle config --local path "$BUNDLERLAYER" >/dev/null
+  bundle config --local bin "$BUNDLERLAYER/bin" >/dev/null
+else
+  # Determine if there has been a gem dependency change and install new gems to the bundler layer; re-using existing and un-changed gems
+  BUNDLERLAYER="${LAYERSDIR}/bundler"
+  echo "---> Installing gems"
+  mkdir -p "$BUNDLERLAYER"
+  echo -e "cache = true\nlaunch = true\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "$BUNDLERLAYER.toml"
+  bundle install --path "$BUNDLERLAYER" --binstubs "$BUNDLERLAYER/bin"
+fi
+
+# 6. SET DEFAULT START COMMAND
+echo 'processes = [{ type = "web", command = "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080"}]' > "${LAYERSDIR}/launch.toml"

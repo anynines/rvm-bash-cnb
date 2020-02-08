@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+if [[ ! -f Gemfile ]]; then
+   exit 100
+fi
+
+PLAN="$2"
+
+echo "provides = [{ name = \"rvm\" }]" > "$PLAN"
+echo "requires = [{ name = \"rvm\" }]" >> "$PLAN"
