@@ -13,10 +13,6 @@ if [[ -f .ruby-version ]]; then
   RUBY_VERSION=$(cat .ruby-version | tr -d '[:space:]')
 fi
 
-if [[ -f .rvmrc ]]; then
-  RUBY_VERSION=$(cat .rvmrc | tr -d '[:space:]')
-fi
-
 BUNDLER_VERSION=""
 if [[ -f Gemfile.lock ]]; then
   FOUND_BUNDLED_WITH=0
@@ -42,24 +38,30 @@ echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
 echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
 ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
 
-echo "---> Installing RVM version 'stable'"
+# The "yj" binary is required to transform TOML code into JSON code below
 curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0.0/yj-linux
 chmod +x /tmp/yj
 
+echo "---> Installing RVM version 'stable'"
 export rvm_path="${RVMLAYER}"
 export rvm_scripts_path="${RVMLAYER}/scripts"
 curl -sSL https://get.rvm.io | bash -s stable
 
+echo "---> Installing Ruby version ${RUBY_VERSION}"
 source "${RVMLAYER}/scripts/rvm"
 rvm autolibs disable
 rvm install ${RUBY_VERSION}
 
-echo -e "launch = true\nbuild = true\ncache = false\n" > "${RVMLAYER}.toml"
+echo -e "build = true\nlaunch = true\ncache = false\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "${RVMLAYER}.toml"
 
 # INSTALL BUNDLER
-echo "---> Installing bundler version $BUNDLER_VERSION"
 GEM_BUNDLER_ARGS=""
-if [[ $BUNDLER_VERSION != "" ]]; then GEM_BUNDLER_ARGS="--version $BUNDLER_VERSION"; fi
+if [[ $BUNDLER_VERSION != "" ]]; then
+  echo "---> Installing bundler version $BUNDLER_VERSION"
+  GEM_BUNDLER_ARGS="--version $BUNDLER_VERSION"
+else
+  echo "---> Installing latest bundler version"
+fi
 gem install bundler --no-document $GEM_BUNDLER_ARGS
 
 # INSTALL PUMA AS APPSERVER
@@ -75,12 +77,14 @@ if [[ -f "${BUNDLERLAYER}.toml" ]]; then
 fi
 
 if [[ -f Gemfile.lock && $LOCAL_BUNDLER_CHECKSUM == $REMOTE_BUNDLER_CHECKSUM ]] ; then
-  # Determine if no gem dependencies have changed, so it can reuse existing gems without running bundle install
+  # Determine if no gem dependencies have changed, so it can reuse existing
+  # gems without running bundle install
   echo "---> Reusing gems"
   bundle config --local path "$BUNDLERLAYER" >/dev/null
   bundle config --local bin "$BUNDLERLAYER/bin" >/dev/null
 else
-  # Determine if there has been a gem dependency change and install new gems to the bundler layer; re-using existing and un-changed gems
+  # Determine if there has been a gem dependency change and install new gems on
+  # the bundler layer, re-using existing and un-changed gems
   BUNDLERLAYER="${LAYERSDIR}/bundler"
   echo "---> Installing gems"
   mkdir -p "$BUNDLERLAYER"
