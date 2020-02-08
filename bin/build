@@ -3,16 +3,18 @@
 set -eo pipefail
 echo "---> RVM Buildpack"
 
-# 1. GET ARGS
+# 1. Arguments according to CNB spec
 LAYERSDIR="$1"
 PLAN="$3"
 
-# the ruby version will be read from .ruby-version
+# If a .ruby-version file exists, use the version specified in there.
 RUBY_VERSION=2.6.5
 if [[ -f .ruby-version ]]; then
   RUBY_VERSION=$(cat .ruby-version | tr -d '[:space:]')
 fi
 
+# Look for the line "BUNDLED WITH" and if found use the next line as the
+# version of Bundler to be installed.
 BUNDLER_VERSION=""
 if [[ -f Gemfile.lock ]]; then
   FOUND_BUNDLED_WITH=0
@@ -29,30 +31,39 @@ if [[ -f Gemfile.lock ]]; then
   done < "Gemfile.lock"
 fi
 
-# 2. INSTALL RVM AND A CONF'ABLE VERSION OF RUBY
-RVMLAYER="${LAYERSDIR}/rvm"
-mkdir -p "${RVMLAYER}/env"
-mkdir -p "${RVMLAYER}/profile.d"
-
-echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
-echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
-ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
-
 # The "yj" binary is required to transform TOML code into JSON code below
 curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0.0/yj-linux
 chmod +x /tmp/yj
 
-echo "---> Installing RVM version 'stable'"
+# 2. INSTALL RVM AND A CONF'ABLE VERSION OF RUBY
+RVMVERSION="1.29.9"
+RVMLAYER="${LAYERSDIR}/rvm"
+REMOTE_RVM_VERSION=""
+if [[ -f "${RVMLAYER}.toml" ]]; then
+  REMOTE_RVM_VERSION=$(cat "${RVMLAYER}.toml" | /tmp/yj -t | jq -r .metadata 2>/dev/null || echo 'not found')
+fi
+
 export rvm_path="${RVMLAYER}"
 export rvm_scripts_path="${RVMLAYER}/scripts"
-curl -sSL https://get.rvm.io | bash -s stable
+if [[ $RVMVERSION == $REMOTE_RVM_VERSION ]] ; then
+  echo "---> Reusing cached RVM version ${RVMVERSION}"
+else
+  mkdir -p "${RVMLAYER}/env"
+  mkdir -p "${RVMLAYER}/profile.d"
+
+  echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
+  echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
+  ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
+
+  echo "---> Installing RVM version ${RVMVERSION}"
+  curl -sSL https://get.rvm.io | bash -s -- --version ${RVMVERSION}
+fi
 
 echo "---> Installing Ruby version ${RUBY_VERSION}"
 source "${RVMLAYER}/scripts/rvm"
 rvm autolibs disable
 rvm install ${RUBY_VERSION}
-
-echo -e "build = true\nlaunch = true\ncache = false\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "${RVMLAYER}.toml"
+echo -e "build = true\ncache = true\nlaunch = true\nmetadata = \"$RVMVERSION\"" > "${RVMLAYER}.toml"
 
 # INSTALL BUNDLER
 GEM_BUNDLER_ARGS=""
@@ -79,14 +90,14 @@ fi
 if [[ -f Gemfile.lock && $LOCAL_BUNDLER_CHECKSUM == $REMOTE_BUNDLER_CHECKSUM ]] ; then
   # Determine if no gem dependencies have changed, so it can reuse existing
   # gems without running bundle install
-  echo "---> Reusing gems"
+  echo "---> Reusing cached Gems"
   bundle config --local path "$BUNDLERLAYER" >/dev/null
   bundle config --local bin "$BUNDLERLAYER/bin" >/dev/null
 else
   # Determine if there has been a gem dependency change and install new gems on
   # the bundler layer, re-using existing and un-changed gems
   BUNDLERLAYER="${LAYERSDIR}/bundler"
-  echo "---> Installing gems"
+  echo "---> Running 'bundle install'"
   mkdir -p "$BUNDLERLAYER"
   echo -e "cache = true\nlaunch = true\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "$BUNDLERLAYER.toml"
   bundle install --path "$BUNDLERLAYER" --binstubs "$BUNDLERLAYER/bin"

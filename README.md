@@ -26,7 +26,8 @@ directory of the application.
 
 ### RVM
 
-The RVM CNB installs the latest RVM version on the "RVM layer".
+The default RVM version installed currently is: **1.9.29**. If the same version
+of RVM was installed in a previous build run, it is used again.
 
 ### Ruby version
 
@@ -44,11 +45,20 @@ installed.
 
 ## Caching
 
-Currently, on the layer provided by "Bundler" is cached. In this layer, bundler
-installs the Gems specified in `Gemfile.lock`. Between two build runs, a SHA256
-hash is computed from the `Gemfile.lock`. If there have been any changes to the
-`Gemfile.lock` file, the previous cached layer is discarded and the Gems are
-installed from scratch.
+The RVM layer provided by installing the RVM version specified above and the
+"Bundler" layer are cached.
+
+The RVM layer is restored from cache if the installed version is equal to the
+default version specified above.
+
+In the Bundler layer, bundler installs the Gems specified in `Gemfile.lock`.
+Between two build runs, a SHA256 hash is computed from the `Gemfile.lock`. If
+there have been any changes to the `Gemfile.lock` file, the cached layer is
+discarded and the Gems are installed from scratch by running `bundle install`.
+
+## Launch
+
+The RVM layer and the Bundler layer are available in the launch phase.
 
 ## Authors
 
