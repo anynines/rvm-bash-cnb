@@ -8,5 +8,19 @@ fi
 
 PLAN="$2"
 
-echo "provides = [{ name = \"rvm\" }]" > "$PLAN"
-echo "requires = [{ name = \"rvm\" }]" >> "$PLAN"
+cat >> "${PLAN}" <<EOL
+[[provides]]
+name = "rvm"
+
+[[requires]]
+name = "rvm"
+
+[[requires]]
+name = "node"
+version = "12.*"
+
+[requires.metadata]
+build = true
+cache = true
+launch = true
+EOL
