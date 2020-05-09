@@ -138,6 +138,6 @@ if [[ -f Procfile ]]; then
   echo "---> Not specifying a launch command because a Procfile is present in the app root directory"
 else
   echo -n "---> Specifying launch command: "
-  echo "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080"
-  echo 'processes = [{ type = "web", command = "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec rake assets:precompile && bundle exec rails server -b 0.0.0.0 -p 8080"}]' > "${LAYERSDIR}/launch.toml"
+  echo "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec puma -b tcp://0.0.0.0 -p 8080 -t 5 -w 5"
+  echo 'processes = [{ type = "web", command = "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec puma -b tcp://0.0.0.0 -p 8080 -t 5 -w 5"}]' > "${LAYERSDIR}/launch.toml"
 fi
