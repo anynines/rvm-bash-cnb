@@ -14,7 +14,7 @@ curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0
 chmod +x /tmp/yj
 
 # 2. INSTALL RVM AND A CONF'ABLE VERSION OF RUBY
-RVM_VERSION="1.29.9"
+RVM_VERSION="1.29.10"
 RVMLAYER="${LAYERSDIR}/rvm"
 REMOTE_RVM_VERSION=""
 if [[ -f "${RVMLAYER}.toml" ]]; then
