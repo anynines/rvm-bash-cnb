@@ -30,8 +30,9 @@ else
   mkdir -p "${RVMLAYER}/env"
   mkdir -p "${RVMLAYER}/profile.d"
 
-  echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path"
-  echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path"
+  echo -n "${RVMLAYER}" > "${RVMLAYER}/env/rvm_path.override"
+  echo -n "${RVMLAYER}/scripts" > "${RVMLAYER}/env/rvm_scripts_path.override"
+  echo -n "0" > "${RVMLAYER}/env/rvm_autoupdate_flag.override"
   ln -sf "${RVMLAYER}/scripts/rvm" "$RVMLAYER/profile.d"
 
   echo "---> Installing RVM version ${RVM_VERSION}"
