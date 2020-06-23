@@ -7,7 +7,7 @@ echo "---> RVM Buildpack"
 LAYERSDIR="$1"
 PLAN="$3"
 
-DEFAULT_RUBY_VERSION="2.6.5"
+DEFAULT_RUBY_VERSION="2.7.1"
 
 # The "yj" binary is required to transform TOML code into JSON code below
 curl -sSL --output /tmp/yj https://github.com/sclevine/yj/releases/download/v4.0.0/yj-linux
@@ -54,7 +54,7 @@ fi
 
 if [[ $REMOTE_RUBY_VERSION == "" || $DEFAULT_RUBY_VERSION != $REMOTE_RUBY_VERSION ]]; then
   echo "---> Installing Ruby version ${DEFAULT_RUBY_VERSION}"
-  rvm autolibs disable
+  rvm autolibs 0
   rvm remove all --force
   rvm install ${DEFAULT_RUBY_VERSION}
   rvm cleanup all
@@ -99,6 +99,16 @@ gem install bundler --no-document $GEM_BUNDLER_ARGS
 
 # INSTALL THE PUMA APP SERVER
 gem install puma --no-document
+if [[ ! -f config/puma.rb ]]; then
+  echo "---> Creating config/puma.rb in the application directory"
+  echo "bind 'tcp://0.0.0.0:8080'" > config/puma.rb
+  echo "workers 5" >> config/puma.rb
+  echo "threads 5, 5" >> config/puma.rb
+  echo "log_requests true" >> config/puma.rb
+  echo "preload_app!" >> config/puma.rb
+fi
+
+# Cleanup gems
 gem cleanup
 
 # 5. INSTALL GEMS
@@ -137,10 +147,10 @@ bundle clean 1>/dev/null
 set -e
 
 # 6. SET DEFAULT START COMMAND
-if [[ -f Procfile ]]; then
-  echo "---> Not specifying a launch command because a Procfile is present in the app root directory"
+if [[ -f Procfile && $(grep -c "^web:.*$" Procfile) -ge 1 ]]; then
+  echo "---> Not specifying a launch command because a Procfile is present in the app root directory which includes a process of type 'web:'"
 else
   echo -n "---> Specifying launch command: "
-  echo "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec puma -b tcp://0.0.0.0 -p 8080 -t 5 -w 5"
-  echo 'processes = [{ type = "web", command = "bundle exec rake db:create && bundle exec rake db:migrate && bundle exec puma -b tcp://0.0.0.0 -p 8080 -t 5 -w 5"}]' > "${LAYERSDIR}/launch.toml"
+  echo '[{ type = "web", command = "puma"}]'
+  echo 'processes = [{ type = "web", command = "puma"}]' > "${LAYERSDIR}/launch.toml"
 fi
