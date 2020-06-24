@@ -57,6 +57,9 @@ if [[ $REMOTE_RUBY_VERSION == "" || $DEFAULT_RUBY_VERSION != $REMOTE_RUBY_VERSIO
   rvm autolibs 0
   rvm remove all --force
   rvm install ${DEFAULT_RUBY_VERSION}
+  gem install -N rubygems-update
+  gem update -N --system
+  gem cleanup
   rvm cleanup all
 else
   echo "---> Ruby version ${DEFAULT_RUBY_VERSION} already installed"
@@ -98,7 +101,13 @@ fi
 gem install bundler --no-document $GEM_BUNDLER_ARGS
 
 # INSTALL THE PUMA APP SERVER
-gem install puma --no-document
+if [[ -f Gemfile.lock && $(grep -c " puma " Gemfile.lock) -ge 1 ]]; then
+  echo "---> Using Puma specified in Gemfile"
+else
+  echo "---> Adding Puma to Gemfile"
+  echo "gem 'puma'" >> Gemfile
+fi
+
 if [[ ! -f config/puma.rb ]]; then
   echo "---> Creating config/puma.rb in the application directory"
   echo "bind 'tcp://0.0.0.0:8080'" > config/puma.rb
@@ -108,42 +117,17 @@ if [[ ! -f config/puma.rb ]]; then
   echo "preload_app!" >> config/puma.rb
 fi
 
-# Cleanup gems
-gem cleanup
-
 # 5. INSTALL GEMS
 # Compares previous Gemfile.lock checksum to the current Gemfile.lock
 BUNDLERLAYER="${LAYERSDIR}/bundler"
-LOCAL_BUNDLER_CHECKSUM=$(sha256sum Gemfile.lock | cut -d ' ' -f 1)
-REMOTE_BUNDLER_CHECKSUM=""
-if [[ -f "${BUNDLERLAYER}.toml" ]]; then
-  REMOTE_BUNDLER_CHECKSUM=$(cat "${BUNDLERLAYER}.toml" | /tmp/yj -t | jq -r .metadata 2>/dev/null || echo 'not found')
-fi
-
+echo "---> Running 'bundle install'"
+mkdir -p "$BUNDLERLAYER"
 bundle config --local path "$BUNDLERLAYER" >/dev/null
-bundle config --local bin "$BUNDLERLAYER/bin" >/dev/null
-set +e
-bundle check 1>/dev/null
-BUNDLE_CHECK_RESULT=$?
-set -e
-if [[ $BUNDLE_CHECK_RESULT -eq 0 && -f Gemfile.lock && $LOCAL_BUNDLER_CHECKSUM == $REMOTE_BUNDLER_CHECKSUM ]]; then
-  # Determine if no gem dependencies have changed, so it can reuse existing
-  # gems without running bundle install
-  echo "---> Reusing cached Gems"
-else
-  # Determine if there has been a gem dependency change and install new gems on
-  # the bundler layer, re-using existing and un-changed gems
-  BUNDLERLAYER="${LAYERSDIR}/bundler"
-  echo "---> Deleting the bundler directory"
-  rm -rf "${BUNDLERLAYER}"
+echo -e "build = true\ncache = true\nlaunch = true\n" > "$BUNDLERLAYER.toml"
+bundle install
 
-  echo "---> Running 'bundle install'"
-  mkdir -p "$BUNDLERLAYER"
-  echo -e "build = true\ncache = true\nlaunch = true\nmetadata = \"$LOCAL_BUNDLER_CHECKSUM\"" > "$BUNDLERLAYER.toml"
-  bundle install --path "$BUNDLERLAYER" --binstubs "$BUNDLERLAYER/bin"
-fi
 set +e
-bundle clean 1>/dev/null
+bundle clean
 set -e
 
 # 6. SET DEFAULT START COMMAND
@@ -151,6 +135,6 @@ if [[ -f Procfile && $(grep -c "^web:.*$" Procfile) -ge 1 ]]; then
   echo "---> Not specifying a launch command because a Procfile is present in the app root directory which includes a process of type 'web:'"
 else
   echo -n "---> Specifying launch command: "
-  echo '[{ type = "web", command = "puma"}]'
-  echo 'processes = [{ type = "web", command = "puma"}]' > "${LAYERSDIR}/launch.toml"
+  echo '[{ type = "web", command = "bundle exec puma"}]'
+  echo 'processes = [{ type = "web", command = "bundle exec puma"}]' > "${LAYERSDIR}/launch.toml"
 fi
