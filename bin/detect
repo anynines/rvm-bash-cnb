@@ -15,10 +15,6 @@ name = "rvm"
 [[requires]]
 name = "rvm"
 
-[[requires]]
-name = "node"
-version = "12.*"
-
 [requires.metadata]
 build = true
 cache = true

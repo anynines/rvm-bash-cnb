@@ -3,7 +3,7 @@ api = "0.2"
 [buildpack]
 id = "com.anynines.buildpacks.rvm"
 name = "RVM Buildpack"
-version = "0.0.12"
+version = "0.0.13"
 
 [metadata]
 include_files = ["bin/build","bin/detect","buildpack.toml"]
@@ -14,5 +14,3 @@ id = "io.buildpacks.stacks.bionic"
 [[stacks]]
 id = "org.cloudfoundry.stacks.cflinuxfs3"
 
-[[stacks]]
-id = "heroku-18"
